@@ -18,6 +18,7 @@ mod agent_account_scope;
 mod agent_antigravity;
 mod agent_copilot;
 mod agent_grok;
+mod agent_kiro;
 mod agent_quota_duration;
 mod agent_quota_history;
 #[cfg(target_os = "windows")]
@@ -28,6 +29,7 @@ mod claude_config_dirs;
 mod extra_scan_paths;
 mod filter_parity_probe;
 mod hourly_report;
+mod kiro_integrations;
 mod window_usage;
 mod model_report;
 mod opencode_integrations;
