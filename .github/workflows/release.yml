@@ -38,10 +38,14 @@ jobs:
       # release-notes.txt: plain text for Sparkle/appcast/latest.json.
       # release-notes.md: markdown for the GitHub release page, with PR
       # links, contributor credit, and GitHub's New Contributors tail.
-      - name: Generate release notes
+      #
+      # Both bodies are hand-written at release-notes/<tag>.{txt,md} and this
+      # step only assembles them with the GitHub-derived credit line and tail.
+      # A missing file fails here rather than falling back, which is the point:
+      # the previous scheme read an unversioned override that a completed
+      # release left behind, armed to republish itself on the next tag.
+      - name: Assemble release notes
         env:
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-          DEEPSEEK_MODEL: ${{ vars.DEEPSEEK_MODEL }}
           GH_TOKEN: ${{ github.token }}
         run: scripts/release_notes.sh
 

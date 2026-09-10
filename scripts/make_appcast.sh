@@ -13,7 +13,7 @@
 # future prerelease (a channel-tagged item) from hiding stable from everyone.
 #
 # generate_appcast authors item fields from the bundle's Info.plist, so the one
-# thing it does not produce is our DeepSeek release notes; we render them to an
+# thing it does not produce is our release notes; we render them to an
 # HTML sidecar named after the archive (TokenBar.app.html) and pass
 # --embed-release-notes so they land in the item's <description> CDATA.
 set -euo pipefail

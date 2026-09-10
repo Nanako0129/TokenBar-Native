@@ -36,6 +36,29 @@ jobs:
           python3 scripts/check_knowledge.py --self-test
           python3 scripts/check_knowledge.py
 
+      # Guards the misfire that reached the tag three times: notes are bound to
+      # the tag by filename, so a release cannot inherit the previous version's
+      # text. Build-independent, so it runs before the toolchain.
+      - name: Release notes contract
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          # A tag with no notes file must fail, not fall back.
+          if GITHUB_REF_NAME=v0.0.0-absent scripts/release_notes.sh >/dev/null 2>&1; then
+            echo "::error::release_notes.sh accepted a tag with no notes file"
+            exit 1
+          fi
+
+          # Every committed pair must agree on its figures. The plain-text notes
+          # reach the Sparkle dialog and the markdown reaches the release page;
+          # a reader comparing the two should not find different numbers.
+          shopt -s nullglob
+          for f in release-notes/*.txt; do
+            python3 scripts/check_release_notes.py "$(basename "$f" .txt)"
+          done
+
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2

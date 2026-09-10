@@ -11,3 +11,8 @@ dist/
 # side effect of the documentation gate, so it is easy to sweep into a commit.
 __pycache__/
 *.pyc
+
+# Assembled at release time by scripts/release_notes.sh from
+# release-notes/<tag>.{md,txt}; never committed.
+release-notes.txt
+release-notes.md

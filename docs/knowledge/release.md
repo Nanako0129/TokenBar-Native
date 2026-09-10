@@ -4,7 +4,7 @@ id: kb-release
 kind: canonical
 scope: repository
 read_when: changing release scripts, code signing, appcast, Sparkle, Homebrew, Pages, or post-release notes
-last_verified: 2026-08-28
+last_verified: 2026-09-10
 sources: [".github/workflows/release.yml", ".github/workflows/ci.yml", ".github/workflows/pages.yml", ".github/workflows/update-install-count.yml", "scripts/bundle.sh", "scripts/build-sparkle.sh", "appcast.xml", "Makefile", "docs/knowledge/plans/provider-quota-pace.md", "public release history"]
 ---
 
@@ -52,7 +52,8 @@ The release workflow is tag-driven. It validates and bundles the native app, pro
 |---|---|---|
 | Native app bundle | `.github/workflows/release.yml` and `scripts/bundle.sh` | Bundle launches and is ad-hoc signed as expected |
 | Sparkle archive/signature | Release workflow and Sparkle tools | EdDSA signature verifies against the published archive |
-| GitHub Release body | `release_notes.sh` plus optional override files | Body has accurate changes, links, and contribution credit |
+| GitHub Release body | Hand-written `release-notes/<tag>.md`, assembled by `release_notes.sh` with GitHub's contributor tail | Body has accurate changes, links, and contribution credit |
+| Sparkle / appcast / `latest.json` text | Hand-written `release-notes/<tag>.txt`, assembled by `release_notes.sh` with the `Thanks:` credit line | Same change set as the body, no markdown, figures agree with it |
 | `appcast.xml` | `scripts/make_appcast.sh` and generated feed | XML parses, old items remain, channel semantics are correct |
 | Homebrew cask | Release workflow generator plus tap repository | Version, URL, checksum, and style match the published asset |
 | Install count | `update-install-count.yml` | Orphan badge branch contains the current filtered asset count |
@@ -111,9 +112,13 @@ Keep English and `zh-tw` copy aligned, preserve original TokenBar design, and tr
 
 ## Post-release verification
 
-The release notes path has two generated forms and at least three published surfaces: the GitHub Release body, the Sparkle appcast description, and the legacy update metadata notes. Generation is non-deterministic, so local preview text is not proof of the CI artifact.
+The release notes path has two forms and at least three published surfaces: the GitHub Release body, the Sparkle appcast description, and the legacy update metadata notes.
 
-A durable escaping regression occurred when a note first contained literal `<`: awk replacement semantics turned `&lt;` into `<lt;`. Generator changes must use fixtures containing literal `<`, `&`, and `>` and verify the CDATA/HTML round-trip.
+The two bodies are hand-written and bound to the tag by filename (`release-notes/<tag>.{md,txt}`), so they are deterministic and a missing one fails the release job rather than inheriting the previous version's text. What is still assembled at run time is the contributor credit line and GitHub's changelog tail: both come from the API under `GH_TOKEN` and are silently absent without it. So local preview text is still not proof of the CI artifact — the bodies will match, the credit and tail may not.
+
+A durable escaping regression occurred when a note first contained literal `<`: awk replacement semantics turned `&lt;` into `<lt;`. Changes to **the awk renderer in `scripts/make_appcast.sh`, or to anything else on the path from `release-notes.txt` to the appcast `<description>`**, must use fixtures containing literal `<`, `&`, and `>` and verify the HTML round-trip. Writing the notes themselves does not touch that path.
+
+That gate is not currently runnable: the renderer is inline in `make_appcast.sh` and writes into a `mktemp -d` its own `EXIT` trap deletes, so its output cannot be observed without changing the script, and a test carrying its own copy of the awk would prove nothing about the shipping path. Tracked in [#313](https://github.com/Nanako0129/TokenBar/issues/313). Until it is closed, this rule is stated but unenforced — do not read it as satisfied.
 
 | After release | Check |
 |---|---|
