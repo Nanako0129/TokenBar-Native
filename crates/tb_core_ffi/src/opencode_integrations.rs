@@ -194,9 +194,187 @@ fn github_copilot_credential_from(
     })
 }
 
+pub(crate) struct OpenCodeGoCredential {
+    pub(crate) request_token: String,
+    pub(crate) marker: Vec<u8>,
+    pub(crate) semantic_source: &'static str,
+    pub(crate) canonical_location: String,
+}
+
+pub(crate) enum OpenCodeGoCredentialLoad {
+    Absent,
+    Present(OpenCodeGoCredential),
+    Terminal(String),
+}
+
+/// Load the OpenCode Go API key. The Go plan is stored as the `opencode-go`
+/// entry with `type: "api"` and a `key`. A missing file/entry, a non-`api`
+/// entry, or an empty key is `Absent`; storage, syntax, canonicalization, or a
+/// present malformed entry is `Terminal` and must not be hidden as signed-out.
+/// This mirrors mana.bar's `OpenCodeGoProvider.loadApiKey`, minus the env-var
+/// key override, which TokenBar does not use.
+pub(crate) fn opencode_go_credential() -> OpenCodeGoCredentialLoad {
+    let Some(path) = auth_path() else {
+        return OpenCodeGoCredentialLoad::Terminal(
+            "OpenCode auth location could not be resolved.".to_string(),
+        );
+    };
+    opencode_go_credential_at(&path)
+}
+
+fn opencode_go_credential_at(path: &std::path::Path) -> OpenCodeGoCredentialLoad {
+    let raw = match std::fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return OpenCodeGoCredentialLoad::Absent;
+        }
+        Err(_) => {
+            return OpenCodeGoCredentialLoad::Terminal(
+                "OpenCode auth file could not be read.".to_string(),
+            );
+        }
+    };
+    let json = match serde_json::from_str::<serde_json::Value>(&raw) {
+        Ok(json) => json,
+        Err(_) => {
+            return OpenCodeGoCredentialLoad::Terminal(
+                "OpenCode auth file could not be decoded.".to_string(),
+            );
+        }
+    };
+    opencode_go_credential_from(path, &json)
+}
+
+fn opencode_go_credential_from(
+    path: &std::path::Path,
+    json: &serde_json::Value,
+) -> OpenCodeGoCredentialLoad {
+    let Some(entry) = json.get("opencode-go") else {
+        return OpenCodeGoCredentialLoad::Absent;
+    };
+    let Some(entry) = entry.as_object() else {
+        return OpenCodeGoCredentialLoad::Terminal(
+            "OpenCode Go auth entry is malformed.".to_string(),
+        );
+    };
+    match entry.get("type") {
+        Some(serde_json::Value::String(kind)) if kind.eq_ignore_ascii_case("api") => {}
+        Some(serde_json::Value::String(_)) => return OpenCodeGoCredentialLoad::Absent,
+        _ => {
+            return OpenCodeGoCredentialLoad::Terminal(
+                "OpenCode Go auth entry is malformed.".to_string(),
+            );
+        }
+    }
+    let key = match entry.get("key") {
+        Some(serde_json::Value::String(value)) => value.trim().to_string(),
+        None | Some(serde_json::Value::Null) => return OpenCodeGoCredentialLoad::Absent,
+        Some(_) => {
+            return OpenCodeGoCredentialLoad::Terminal(
+                "OpenCode Go auth entry is malformed.".to_string(),
+            );
+        }
+    };
+    if key.is_empty() {
+        return OpenCodeGoCredentialLoad::Absent;
+    }
+    let canonical_location =
+        match crate::agent_account_scope::canonical_file_location(path, Some("opencode-go")) {
+            Ok(location) => location,
+            Err(_) => {
+                return OpenCodeGoCredentialLoad::Terminal(
+                    "OpenCode Go auth location could not be verified.".to_string(),
+                );
+            }
+        };
+    OpenCodeGoCredentialLoad::Present(OpenCodeGoCredential {
+        request_token: key.clone(),
+        marker: key.into_bytes(),
+        semantic_source: "opencode-auth-json",
+        canonical_location,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn opencode_go_key_present_absent_and_terminal() {
+        let path = std::env::temp_dir().join("fixture-opencode-auth.json");
+        // Present: an api entry with a non-empty key.
+        let present = serde_json::json!({
+            "opencode-go": { "type": "api", "key": "  sk-go-secret  " }
+        });
+        match opencode_go_credential_from(&path, &present) {
+            OpenCodeGoCredentialLoad::Present(credential) => {
+                assert_eq!(credential.request_token, "sk-go-secret");
+                assert_eq!(credential.marker, b"sk-go-secret");
+                assert_eq!(credential.semantic_source, "opencode-auth-json");
+            }
+            _ => panic!("expected present credential"),
+        }
+        // Absent: missing entry, non-api type, or empty/absent key.
+        for json in [
+            serde_json::json!({}),
+            serde_json::json!({ "opencode-go": { "type": "oauth", "key": "x" } }),
+            serde_json::json!({ "opencode-go": { "type": "api", "key": "  " } }),
+            serde_json::json!({ "opencode-go": { "type": "api" } }),
+        ] {
+            assert!(matches!(
+                opencode_go_credential_from(&path, &json),
+                OpenCodeGoCredentialLoad::Absent
+            ));
+        }
+        // Terminal: a present but malformed entry.
+        for json in [
+            serde_json::json!({ "opencode-go": "api" }),
+            serde_json::json!({ "opencode-go": { "type": "api", "key": 42 } }),
+            serde_json::json!({ "opencode-go": { "key": "x" } }),
+        ] {
+            assert!(matches!(
+                opencode_go_credential_from(&path, &json),
+                OpenCodeGoCredentialLoad::Terminal(_)
+            ));
+        }
+    }
+
+    #[test]
+    fn opencode_go_file_loader_treats_missing_as_absent_and_io_or_json_as_terminal() {
+        // Mirrors the Copilot file-loader matrix: a missing file is a signed-out
+        // Absent, while an unreadable path (a directory) or undecodable content
+        // is Terminal and must not be hidden as signed-out.
+        let root = std::env::temp_dir().join(format!(
+            "tokenbar-opencode-go-loader-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        assert!(matches!(
+            opencode_go_credential_at(&root.join("missing.json")),
+            OpenCodeGoCredentialLoad::Absent
+        ));
+        assert!(matches!(
+            opencode_go_credential_at(&root),
+            OpenCodeGoCredentialLoad::Terminal(_)
+        ));
+
+        let invalid = root.join("invalid.json");
+        std::fs::write(&invalid, "not json").unwrap();
+        assert!(matches!(
+            opencode_go_credential_at(&invalid),
+            OpenCodeGoCredentialLoad::Terminal(_)
+        ));
+
+        let present = root.join("present.json");
+        std::fs::write(&present, r#"{"opencode-go":{"type":"api","key":"sk-go"}}"#).unwrap();
+        assert!(matches!(
+            opencode_go_credential_at(&present),
+            OpenCodeGoCredentialLoad::Present(_)
+        ));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn labels_oauth_providers_only() {

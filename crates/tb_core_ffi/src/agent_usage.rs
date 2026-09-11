@@ -5,6 +5,7 @@ use crate::agent_account_scope::{
 use crate::agent_antigravity;
 use crate::agent_copilot;
 use crate::agent_grok;
+use crate::agent_opencode_go;
 use crate::agent_quota_duration::{DurationEvidence, DurationSource, DurationUnavailableReason};
 use crate::agent_quota_history::{
     BatchObservationResult, HistoricalPace, HistoryError, HistoryOutcome, QuotaObservation,
@@ -1354,7 +1355,10 @@ fn usable_success(snapshot: &AgentUsageSnapshot) -> bool {
             .windows
             .iter()
             .any(|window| window.card_id == "billing.weekly.v1"),
-        "claude" | "copilot" | "antigravity" => !snapshot.windows.is_empty(),
+        // "opencode" carries the OpenCode Go subscription quota (client_id
+        // "opencode"); like the others its success is non-empty windows, so a
+        // later transient failure keeps the last-good card instead of a bare error.
+        "claude" | "copilot" | "antigravity" | "opencode" => !snapshot.windows.is_empty(),
         _ => false,
     }
 }
@@ -1507,12 +1511,13 @@ fn apply_provider_outcome(
 
 pub async fn run(publication_generation: u64) -> AgentUsagePayload {
     let generated_at = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
-    let (codex, claude, antigravity, copilot, grok) = tokio::join!(
+    let (codex, claude, antigravity, copilot, grok, opencode_go) = tokio::join!(
         fetch_codex(),
         fetch_claude_accounts(),
         fetch_antigravity(),
         fetch_copilot(),
-        fetch_grok()
+        fetch_grok(),
+        fetch_opencode_go()
     );
     let mut agents = vec![codex];
     // The primary first, then any extra config directories. With none
@@ -1526,6 +1531,10 @@ pub async fn run(publication_generation: u64) -> AgentUsagePayload {
     // Grok only appears when ~/.grok/auth.json has credentials.
     if let Some(grok) = grok {
         agents.push(grok);
+    }
+    // OpenCode Go only appears when opencode auth.json holds an "opencode-go" api key.
+    if let Some(opencode_go) = opencode_go {
+        agents.push(opencode_go);
     }
     AgentUsagePayload {
         generated_at,
@@ -1594,6 +1603,45 @@ async fn fetch_copilot() -> Option<AgentUsageSnapshot> {
         }
     };
     apply_provider_outcome("copilot", None, "oauth", outcome)
+}
+
+async fn fetch_opencode_go() -> Option<AgentUsageSnapshot> {
+    let now = Utc::now();
+    let outcome = match crate::opencode_integrations::opencode_go_credential() {
+        crate::opencode_integrations::OpenCodeGoCredentialLoad::Absent => {
+            ProviderFetchOutcome::Absent
+        }
+        crate::opencode_integrations::OpenCodeGoCredentialLoad::Terminal(display) => {
+            ProviderFetchOutcome::Failure(ProviderFetchFailure::terminal(display))
+        }
+        crate::opencode_integrations::OpenCodeGoCredentialLoad::Present(credential) => {
+            match agent_opencode_go::fetch(now, credential).await {
+                Ok(data) => ProviderFetchOutcome::Success {
+                    cache_binding: Some(data.cache_binding),
+                    snapshot: AgentUsageSnapshot {
+                        account_key: None,
+                        // The Go subscription quota attaches to the existing
+                        // `opencode` client tab, mirroring how the Copilot quota
+                        // (also fetched via opencode auth) feeds the `copilot`
+                        // tab rather than a separate one.
+                        client_id: "opencode".to_string(),
+                        source: "api".to_string(),
+                        updated_at: now.to_rfc3339_opts(SecondsFormat::Millis, true),
+                        identity: data.identity,
+                        account_scope: data.account_scope,
+                        // OpenCode Go has no authoritative owner ID in what TokenBar fetches.
+                        history_scope: agent_account_scope::resolve_history_scope("opencode", None),
+                        windows: data.windows,
+                        credits: None,
+                        error: None,
+                        transport_diagnostic: None,
+                    },
+                },
+                Err(failure) => ProviderFetchOutcome::Failure(failure),
+            }
+        }
+    };
+    apply_provider_outcome("opencode", None, "api", now, outcome)
 }
 
 async fn fetch_antigravity() -> AgentUsageSnapshot {
@@ -6558,6 +6606,64 @@ mod tests {
     }
 
     #[test]
+    fn opencode_go_success_is_cached_and_survives_a_same_binding_transient() {
+        // Regression for the OpenCode Go provider: `usable_success` must admit
+        // client_id "opencode" so a successful Go fetch enters PROVIDER_LAST_GOOD
+        // and a later transient failure keeps the last-good card. Dropping
+        // "opencode" from `usable_success` turns this red: the success is never
+        // cached, so the transient failure returns a bare error instead.
+        let scope = TestRefreshScope::new("opencode", "opencode-last-good");
+        let account_scope = scope
+            .resolve_current("fixture", "account-go", b"marker-go")
+            .unwrap();
+        let binding = ProviderCacheBinding::primary(account_scope.clone());
+        let cache = Mutex::new(ProviderLastGoodCache::default());
+        let fresh_at = Utc.timestamp_opt(1_700_000_000, 0).single().unwrap();
+        let failure_at = fresh_at + chrono::Duration::minutes(1);
+
+        let fresh = apply_provider_outcome_with(
+            &cache,
+            "opencode",
+            None,
+            "api",
+            fresh_at,
+            ProviderFetchOutcome::Success {
+                snapshot: cache_test_snapshot("opencode", Ok(account_scope), fresh_at),
+                cache_binding: Some(binding.clone()),
+            },
+            |_| {},
+        )
+        .unwrap();
+        assert!(fresh.error.is_none());
+        assert_eq!(fresh.windows.len(), 1);
+        // The success reached the cache under the opencode slot.
+        assert!(lock_last_good(&cache)
+            .entries
+            .contains_key(&account_slot("opencode", None)));
+
+        let fallback = apply_provider_outcome_with(
+            &cache,
+            "opencode",
+            None,
+            "api",
+            failure_at,
+            ProviderFetchOutcome::Failure(ProviderFetchFailure::transient(
+                "OpenCode Go usage request failed. Retrying automatically.",
+                Some(binding.clone()),
+                timeout_diagnostic(),
+            )),
+            |_| {},
+        )
+        .unwrap();
+        // The last-good window is preserved; the current error rides on top.
+        assert_eq!(fallback.updated_at, fresh.updated_at);
+        assert_eq!(fallback.windows.len(), 1);
+        assert_eq!(fallback.windows[0].label_for_test(), "Session");
+        assert!(fallback.error.is_some());
+        scope.cleanup();
+    }
+
+    #[test]
     fn last_good_mismatch_unbound_terminal_and_absent_clear_cache() {
         let scope = TestRefreshScope::new("codex", "last-good-clear");
         let scope_a = scope
@@ -6817,7 +6923,7 @@ mod tests {
 
     #[tokio::test]
     async fn verified_binding_failure_prevents_every_provider_request() {
-        for provider in ["codex", "claude", "grok", "copilot", "antigravity"] {
+        for provider in ["codex", "claude", "grok", "copilot", "antigravity", "opencode"] {
             let sends = std::cell::Cell::new(0);
             let result: Result<(), &str> =
                 request_after_verified_binding(Err::<(), _>("scope unavailable"), |()| async {

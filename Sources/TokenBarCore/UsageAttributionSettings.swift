@@ -217,6 +217,12 @@ public enum UsageAttributionSettings {
         let configured = (payload?.agents ?? []).compactMap { snapshot -> String? in
             guard snapshot.identity != nil || !snapshot.windows.isEmpty || snapshot.credits != nil
             else { return nil }
+            // A declared router is never a direct attribution target — its usage
+            // is attributed through the subscriptions it routes into, not to
+            // itself (architecture.md, "Router 不進表"). opencode now carries its
+            // own OpenCode Go quota snapshot, so without this it would be admitted
+            // here as a target and a usage row could be "assigned" to opencode.
+            guard snapshot.clientId != "opencode" else { return nil }
             return snapshot.clientId
         }
         let viaOpencode = (payload?.opencodeSubscriptions ?? [])

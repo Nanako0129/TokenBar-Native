@@ -4,8 +4,8 @@ id: kb-plan-provider-quota-pace
 kind: plan
 scope: repository
 read_when: implementing or reviewing pace duration and historical pace for provider quota cards
-last_verified: 2026-08-28
-sources: ["crates/tb_core_ffi/src/agent_quota_history.rs", "crates/tb_core_ffi/src/agent_usage.rs", "crates/tb_core_ffi/src/agent_antigravity.rs", "crates/tb_core_ffi/src/agent_copilot.rs", "crates/tb_core_ffi/src/agent_grok.rs", "Sources/TokenBarCore/AgentUsage.swift", "Sources/TokenBarCore/UsagePace.swift", "Sources/TokenBar/TrayAnimator.swift", "Sources/TokenBar/DashboardModel.swift", "docs/knowledge/plans/codex-historical-pace-v2.md", "docs/knowledge/architecture.md", "docs/knowledge/verification.md", "public TokenBar-Windows PR #7", "public TokenBar PR #114", "public TokenBar-Windows PR #12", "official GitHub Copilot billing documentation", "official Claude usage credits documentation"]
+last_verified: 2026-09-08
+sources: ["crates/tb_core_ffi/src/agent_quota_history.rs", "crates/tb_core_ffi/src/agent_usage.rs", "crates/tb_core_ffi/src/agent_antigravity.rs", "crates/tb_core_ffi/src/agent_copilot.rs", "crates/tb_core_ffi/src/agent_grok.rs", "crates/tb_core_ffi/src/agent_opencode_go.rs", "crates/tb_core_ffi/src/opencode_integrations.rs", "Sources/TokenBar/Views/AgentLimitsCard.swift", "Sources/TokenBarCore/UsageAttributionSettings.swift", "Sources/TokenBarCore/AgentUsage.swift", "Sources/TokenBarCore/UsagePace.swift", "Sources/TokenBar/TrayAnimator.swift", "Sources/TokenBar/DashboardModel.swift", "docs/knowledge/plans/codex-historical-pace-v2.md", "docs/knowledge/architecture.md", "docs/knowledge/verification.md", "public TokenBar-Windows PR #7", "public TokenBar PR #114", "public TokenBar-Windows PR #12", "official GitHub Copilot billing documentation", "official Claude usage credits documentation"]
 ---
 
 # Provider-wide quota pace plan
@@ -57,7 +57,7 @@ sources: ["crates/tb_core_ffi/src/agent_quota_history.rs", "crates/tb_core_ffi/s
 | Cross-language | Rust JSON、C contract comment、Swift decoder／presentation、Windows handoff fixture | 未經另行授權修改 TokenBar-Windows |
 | Integration | 可審查的 Mac 實作與完整本機驗證計畫 | Push、PR、merge、tag、appcast 或 Homebrew release |
 
-`OpenCode` 只提供 Copilot authentication，不是獨立 quota provider。Antigravity local IDE與 remote OAuth都是同一 provider，但 current auth evidence不能安全證明兩條 route屬於同一 account；因此兩邊都支援 pace，卻保持 account-scope隔離，直到 authenticated provider ID能證明同一 owner。安全 fragmentation優先於跨帳號污染。
+`OpenCode` 過去只提供 Copilot authentication，不是獨立 quota provider。**此凍結決定已更新，不是無聲更動**（ported from mana.bar 的 OpenCode Go provider）：OpenCode Go plan 用 `auth.json` 的 `opencode-go` api key（`type: "api"`）呼叫 `/zen/go/v1/usage`，回報 rolling／weekly／monthly 三個 percentage window。因此 `opencode` client 現在同時是 router（計入它簽入的 oauth subscriptions）與自有 quota provider。此 quota 以 `client_id = "opencode"` 掛在既有 `opencode` client 與 tab，和 Copilot quota 掛在 `copilot` tab 同一模式，不新增 tab；`AgentLimitsCard` 的 opencode-router 分支因此先列自有 window card，再列它 route 的 subscriptions。window 目前不帶 duration evidence，pace 走 learning-duration lifecycle。Antigravity local IDE與 remote OAuth都是同一 provider，但 current auth evidence不能安全證明兩條 route屬於同一 account；因此兩邊都支援 pace，卻保持 account-scope隔離，直到 authenticated provider ID能證明同一 owner。安全 fragmentation優先於跨帳號污染。
 
 ## 目前缺口
 

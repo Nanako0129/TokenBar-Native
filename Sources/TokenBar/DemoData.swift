@@ -401,10 +401,59 @@ enum DemoData {
             ]
         }
 
+        let monthlyDuration: Int64 = 2_592_000
         let agents = ClientRegistry.allIds.enumerated().map { index, id in
             let sessionUsed = Double(12 + (index * 7) % 76)
             let weeklyUsed = max(5, sessionUsed * 0.58)
             let windows: [[String: Any]]
+            // The `opencode` client carries the OpenCode Go subscription quota:
+            // rolling/weekly/monthly percent windows (ported from mana.bar).
+            // Give it those three so the demo card matches the real provider
+            // shape instead of the generic session/weekly fixture.
+            if id == "opencode" {
+                // The real OpenCode Go adapter attaches NO duration evidence (the
+                // endpoint reports only a percent and a reset), so pace is in the
+                // learning-duration state. Model the demo the same way rather than
+                // claiming a `contract` duration the provider never supplies.
+                func goWindow(
+                    cardId: String, label: String, used: Double, duration: Int64,
+                    resetText: String
+                ) -> [String: Any] {
+                    [
+                        "cardId": cardId,
+                        "label": label,
+                        "usedPercent": used,
+                        "remainingPercent": 100 - used,
+                        "resetsAt": formatter.string(
+                            from: now.addingTimeInterval(TimeInterval(duration / 2))),
+                        "resetText": resetText,
+                        "paceStatus": [
+                            "state": "learningDuration",
+                            "windowKey": cardId,
+                            "durationSource": "observed",
+                            "completeCycles": 0,
+                        ],
+                    ]
+                }
+                windows = [
+                    goWindow(
+                        cardId: "rolling.v1", label: "Rolling", used: 47,
+                        duration: sessionDuration, resetText: "in 2h 30m"),
+                    goWindow(
+                        cardId: "weekly.v1", label: "Weekly", used: 63,
+                        duration: weeklyDuration, resetText: "in 3d 12h"),
+                    goWindow(
+                        cardId: "monthly.v1", label: "Monthly", used: 28,
+                        duration: monthlyDuration, resetText: "in 14d 6h"),
+                ]
+                return [
+                    "clientId": id,
+                    "source": "fixture",
+                    "updatedAt": updated,
+                    "identity": ["email": "demo@\(id).local", "plan": "Go"],
+                    "windows": windows,
+                ] as [String: Any]
+            }
             switch index {
             case 0:
                 windows = [

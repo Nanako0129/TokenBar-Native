@@ -294,8 +294,10 @@ struct AgentLimitsCard: View {
 
     private var opencodeSubs: [String] { agentUsage?.opencodeSubscriptions ?? [] }
 
-    /// opencode is a router with no quota of its own; its client view instead
-    /// shows the cards of the subscriptions it's authed against.
+    /// opencode is primarily a router: its client view shows the cards of the
+    /// subscriptions it's authed against. It can also carry a quota of its own —
+    /// the OpenCode Go plan — in which case `opencodeCardClients` leads with that
+    /// own-quota card, then the routed subscriptions.
     private var opencodeView: Bool { restrict && clients.contains("opencode") }
 
     /// The hide set applied to every candidate list this card can produce.
@@ -322,6 +324,17 @@ struct AgentLimitsCard: View {
     ) -> [T] {
         let hidden = ClientRegistry.parseIdSet(hiddenRaw)
         return candidates.filter { !hidden.contains(clientId($0)) }
+    }
+
+    /// Ordered client ids for the opencode router card. opencode used to be a
+    /// pure router with no quota of its own; the OpenCode Go plan (ported from
+    /// mana.bar) now gives it one. When that snapshot is present its own window
+    /// card leads, then the subscriptions it routes through, and it is never
+    /// duplicated into the subscription tail (a routed label could resolve back
+    /// to `opencode`). Static and pure so SelfTest asserts the ordering without
+    /// building the View.
+    static func opencodeCardClients(ownQuotaPresent: Bool, subscriptions: [String]) -> [String] {
+        (ownQuotaPresent ? ["opencode"] : []) + subscriptions.filter { $0 != "opencode" }
     }
 
     /// Builds the final row list from a KNOWN clientId universe and the
@@ -371,13 +384,19 @@ struct AgentLimitsCard: View {
         // returned it on snapshot availability alone. A rule that has to sit
         // ahead of every return is one binding, not a line to keep relocating.
         if opencodeView {
-            let ids = opencodeSubs
+            let subs = opencodeSubs
                 // The subscription-owner resolution, not the raw label mapper:
                 // `Xai` maps to `xai` there, while the quota snapshot is keyed
                 // `grok`, so the filter below would drop the very card opencode
                 // is authed against.
                 .compactMap(UsageAttributionSettings.subscriptionClient(forLabel:))
                 .filter { snapshots[primary($0)] != nil }
+            // opencode is no longer only a router: the OpenCode Go plan (fetched
+            // via the opencode-go api key, ported from mana.bar) gives it a quota
+            // of its own. When that snapshot is present, show opencode's own
+            // window card first, then the subscriptions it also routes through.
+            let ids = Self.opencodeCardClients(
+                ownQuotaPresent: snapshots[primary("opencode")] != nil, subscriptions: subs)
             return expandedWithExtraAccounts(known: ids, visiblePrimaries: visiblePrimaries(of: ids))
         }
         func known(_ id: String) -> Bool {

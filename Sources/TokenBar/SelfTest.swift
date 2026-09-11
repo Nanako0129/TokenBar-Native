@@ -1667,6 +1667,14 @@ enum SelfTest {
             claudeProviderRow?.client == "claude" && attributionTargets.contains("codex"),
             "claude source rows can target a different subscription client")
 
+        // opencode carries its own OpenCode Go quota snapshot in the demo payload
+        // (identity "Go" + windows), but it is a router: it must never become a
+        // direct attribution target (architecture.md, "Router 不進表"). Without the
+        // router guard in subscriptionClients, the snapshot would admit it here.
+        expect(
+            !attributionTargets.contains("opencode"),
+            "opencode's own quota snapshot does not make it an attribution target")
+
         expect(
             UsageAttributionSettings.suggestionTarget(
                 sourceClient: "copilot", provider: "openai",
@@ -1691,8 +1699,10 @@ enum SelfTest {
                 sourceClient: "claude", provider: "openai",
                 subscriptionClients: ["claude", "codex"]) == .assigned("codex"),
             "gateway-routed openai usage suggests the codex subscription")
-        // opencode is a router with no plan of its own, so with nothing declared
-        // about what it is signed into, nothing can be said. This used to answer
+        // opencode is a router with no cost plan of its own for attribution (its
+        // OpenCode Go quota is a subscription-quota card, not a model-cost plan),
+        // so with nothing declared about what it is signed into, nothing can be
+        // said about which subscription its local usage spends. This used to answer
         // `.excluded` — an assertion that the tokens were bought — which the
         // 2026-08 survey showed there was never evidence for.
         expect(
@@ -4599,6 +4609,17 @@ enum SelfTest {
                 && unknownTransport?.first?.status == nil
                 && unknownTransport?.first?.osCode == nil,
             "unknown transport tuples drop associated numerics")
+        // The OpenCode Go provider publishes diagnostics under clientId "opencode";
+        // it is on the allowlist, so its id is preserved rather than rewritten to
+        // "unknown" like an unsupported client.
+        let opencodeTransport = transportEntries(
+            transportBase.replacingOccurrences(of: "codex", with: "opencode")
+                + #","transportDiagnostic":{"category":"rateLimited","status":429,"osCode":-1}"#)
+        expect(
+            opencodeTransport?.first?.clientId == "opencode"
+                && opencodeTransport?.first?.category == "rateLimited"
+                && opencodeTransport?.first?.status == 429,
+            "opencode transport diagnostics keep their client id")
         let malformedTransportBodies = [
             transportBase + #","transportDiagnostic":"not-an-object""#,
             transportBase + #","transportDiagnostic":{"status":500}"#,
@@ -5356,6 +5377,27 @@ enum SelfTest {
                 placeholders: ["codex", "claude", "gemini"])
                 == ["claude", "antigravity"],
             "knownLimitsClients drops no-limit present ids, keeps quota-only ids")
+
+        // opencodeCardClients: the OpenCode Go quota (ported from mana.bar) makes
+        // opencode its own quota provider, not only a router. Its own window card
+        // leads when the snapshot is present, then the routed subscriptions; it is
+        // never duplicated into the tail. The false case must NOT prepend, or the
+        // "no Go plan signed in" account would show an empty opencode card.
+        expect(
+            AgentLimitsCard.opencodeCardClients(
+                ownQuotaPresent: true, subscriptions: ["codex", "claude"])
+                == ["opencode", "codex", "claude"],
+            "opencodeCardClients leads with opencode's own quota, then subscriptions")
+        expect(
+            AgentLimitsCard.opencodeCardClients(
+                ownQuotaPresent: false, subscriptions: ["codex", "claude"])
+                == ["codex", "claude"],
+            "opencodeCardClients omits opencode when it has no Go quota snapshot")
+        expect(
+            AgentLimitsCard.opencodeCardClients(
+                ownQuotaPresent: true, subscriptions: ["opencode", "codex"])
+                == ["opencode", "codex"],
+            "opencodeCardClients never duplicates opencode into the subscription tail")
 
         // CSV id-set parse helper: empty string → empty set; commas split.
         expect(ClientRegistry.parseIdSet("").isEmpty, "parseIdSet empty string is empty")

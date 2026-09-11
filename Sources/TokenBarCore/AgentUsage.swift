@@ -711,7 +711,9 @@ package struct AgentUsageTransportLogEntry: Equatable, Sendable {
 }
 
 private let agentUsageTransportLogClientIds: Set<String> = [
-    "codex", "claude", "antigravity", "copilot", "grok",
+    // "opencode" carries the OpenCode Go quota; keep its transport diagnostics
+    // attributable instead of rewriting them to "unknown" like an unsupported id.
+    "codex", "claude", "antigravity", "copilot", "grok", "opencode",
 ]
 
 private let agentUsageTransportLogCategories: Set<String> = [
